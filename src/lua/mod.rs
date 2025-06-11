@@ -1,6 +1,7 @@
 pub mod events;
 pub mod manifest;
 pub mod runtime;
+pub mod structs;
 pub mod worker;
 
 use std::path::PathBuf;
