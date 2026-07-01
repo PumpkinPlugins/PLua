@@ -1,86 +1,82 @@
-use std::sync::Arc;
+use std::cell::RefCell;
 
-use pumpkin::{plugin::Context, server::Server};
-use pumpkin_api_macros::{plugin_impl, plugin_method};
-use pumpkin_util::{
-    PermissionLvl,
-    permission::{Permission, PermissionDefault},
-};
-use std::sync::OnceLock;
+use pumpkin_plugin_api::{Context, Plugin, PluginMetadata, permissions};
 
-mod commands;
-mod config;
-mod loader;
-mod lua;
+use crate::config::PLuaConfig;
+use crate::script::runtime::PluginRuntime;
 
-use loader::LuaPluginLoader;
+pub mod commands;
+pub mod config;
+pub mod events;
+pub mod script;
 
-pub static SERVER: OnceLock<Arc<Server>> = OnceLock::new();
+thread_local! {
+    pub static SCRIPT_RUNTIME: RefCell<Option<PluginRuntime>> = const { RefCell::new(None) };
+    pub static CONFIG: RefCell<PLuaConfig> = RefCell::new(PLuaConfig::default());
+}
 
-impl PLuaPlugin {
-    pub fn new() -> Self {
-        PLuaPlugin {}
+struct PLuaPlugin;
+
+impl Plugin for PLuaPlugin {
+    fn new() -> Self {
+        PLuaPlugin
     }
 
-    fn setup_lua(&mut self, context: &Context) -> Result<(), String> {
-        lua::init_lua_manager(context.get_data_folder())
-            .map_err(|e| format!("Failed to initialize Lua manager: {}", e))
+    fn metadata(&self) -> PluginMetadata {
+        PluginMetadata {
+            name: "plua".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            authors: vec!["vyPal".into()],
+            description: "Write plugins for the Pumpkin MC Server software in Lua".into(),
+            dependencies: vec![],
+            permissions: vec![
+                permissions::FS_READ_DATA.into(),
+                permissions::FS_WRITE_DATA.into(),
+            ],
+        }
     }
 
-    async fn register_plua_command(&self, context: &Context) -> Result<(), String> {
-        let command = commands::plua::init_command_tree();
-        let permission = Permission::new(
-            crate::commands::plua::PERMISSION_NODE,
-            "Allow running the /plua command",
-            PermissionDefault::Op(PermissionLvl::Four),
-        );
-        context.register_permission(permission).await?;
-        context
-            .register_command(command, crate::commands::plua::PERMISSION_NODE)
-            .await;
-        Ok(())
-    }
+    fn on_load(&mut self, context: Context) -> pumpkin_plugin_api::Result<()> {
+        let data_folder = context.get_data_folder();
 
-    async fn register_lua_loader(&self, context: &Context) -> Result<(), String> {
-        let lua_loader = match LuaPluginLoader::new() {
-            Ok(loader) => loader,
-            Err(e) => return Err(format!("Failed to create Lua plugin loader: {}", e)),
-        };
+        let config = PLuaConfig::load(&data_folder);
+        let mut runtime = PluginRuntime::new(&data_folder);
 
-        lua::events::register_events(context).await?;
+        let server = context.get_server();
+        runtime.init_api(server);
 
-        let plugin_manager = context.plugin_manager.clone();
-        let loader = Arc::new(lua_loader);
-        tokio::spawn(async move {
-            let plugin_manager = plugin_manager.clone();
-            let loader = loader.clone();
-            let mut manager = plugin_manager.write().await;
-            manager.add_loader(loader).await;
+        events::register_all_handlers(&context)?;
+
+        runtime.discover_plugins();
+        runtime.load_enabled_plugins(&config);
+
+        config.write(&data_folder);
+
+        SCRIPT_RUNTIME.with(|r| {
+            *r.borrow_mut() = Some(runtime);
+        });
+        CONFIG.with(|c| {
+            *c.borrow_mut() = config;
         });
 
+        commands::plua::register(&context)?;
+
+        tracing::info!("PLua loaded successfully!");
+        Ok(())
+    }
+
+    fn on_unload(&mut self, context: Context) -> pumpkin_plugin_api::Result<()> {
+        CONFIG.with_borrow(|c| {
+            c.write(&context.get_data_folder());
+        });
+        SCRIPT_RUNTIME.with(|r| {
+            if let Some(ref mut runtime) = *r.borrow_mut() {
+                runtime.disable_all_plugins();
+            }
+        });
+        tracing::info!("PLua unloaded.");
         Ok(())
     }
 }
 
-#[plugin_method]
-async fn on_load(&mut self, context: &Context) -> Result<(), String> {
-    pumpkin::init_log!();
-
-    let _ = SERVER.set(context.server.clone());
-
-    self.setup_lua(context)?;
-    self.register_plua_command(context).await?;
-
-    self.register_lua_loader(context).await?;
-
-    Ok(())
-}
-
-impl Default for PLuaPlugin {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[plugin_impl]
-pub struct PLuaPlugin {}
+pumpkin_plugin_api::register_plugin!(PLuaPlugin);

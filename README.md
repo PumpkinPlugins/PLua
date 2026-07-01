@@ -1,262 +1,154 @@
-# PLua - Lua Plugin Loader for Pumpkin
+# PLua - Lua Plugin System for Pumpkin
 
-PLua is a plugin for the Pumpkin Minecraft server that enables loading and managing plugins written in Lua. This is a translation layer/runtime that allows server administrators to extend their Pumpkin server with Lua scripting capabilities.
-
-> **New!** PLua now supports loading Lua plugins directly from the server's plugins directory! [Learn more](#direct-lua-plugins)
+PLua is a WASM plugin for the Pumpkin Minecraft server that enables loading and managing plugins written in Lua. It embeds a Lua 5.4 runtime (via [piccolo](https://github.com/kyren/piccolo)) and proxies Minecraft events to Lua callbacks.
 
 ## Installation
 
-### Pre-built Binaries
+### Pre-built Binary
 
-Pre-built binaries for the most common architectures are available from GitHub Releases:
-
-| Platform | Architecture | Download |
-| -------- | ------------ | -------- |
-| Linux    | amd64        | [Download](https://github.com/PumpkinPlugins/PLua/releases/latest/download/libplua_x86_64_linux.so) |
-| Linux    | arm64        | [Download](https://github.com/PumpkinPlugins/PLua/releases/latest/download/libplua_aarch64_linux.so) |
-| Windows  | amd64        | [Download](https://github.com/PumpkinPlugins/PLua/releases/latest/download/plua_x86_64_windows.dll) |
-
-Download the appropriate file for your platform and place it in the `plugins` directory of your Pumpkin server.
-
-You can also download all platform builds from the [latest release page](https://github.com/PumpkinPlugins/PLua/releases/latest).
+Download `plua.wasm` from [The Pumpkin Market](https://market.pumpkinmc.org/plugin/44) and place it in your Pumpkin server's plugins directory.
 
 ### Building from Source
 
-If you prefer to build from source:
-
 ```bash
-# Clone the repository
 git clone https://github.com/PumpkinPlugins/PLua.git
 cd PLua
 
-# Build the plugin
+# Add the WASM target
+rustup target add wasm32-wasip2
+
+# Build
 cargo build --release
 
-# The compiled plugin will be in target/release/
+# The compiled plugin is at target/wasm32-wasip2/release/plua.wasm
 ```
-
-For cross-compilation, you can specify the target platform:
-
-```bash
-# For Linux ARM64
-rustup target add aarch64-unknown-linux-gnu
-cargo build --release --target aarch64-unknown-linux-gnu
-
-# For Windows
-rustup target add x86_64-pc-windows-gnu
-cargo build --release --target x86_64-pc-windows-gnu
-```
-
-## Features
-
-- Load and manage Lua plugins
-- Enable/disable plugins via in-game commands
-- Hot reload plugins without restarting the server
-- Simplified API for Lua plugins to interact with the Pumpkin server
 
 ## Getting Started
 
-There are two ways to use PLua: via the traditional method (using `/plua` commands) or via the new direct plugin loading feature.
-
-### Traditional Method
-
-1. Install the plugin by downloading a pre-built binary or building from source.
-
-2. Copy the compiled `.so` or `.dll` file to your Pumpkin server's plugins directory.
-
-3. Start or restart your Pumpkin server.
-
-4. The plugin will create a `plugins/plua` directory with a `plugins` subdirectory where Lua plugins will be stored.
-
-5. Install some Lua plugins or create your own and place them in the `plugins/plua/plugins` directory.
-
-6. Enable plugins using the in-game commands (see below).
-
-### Direct Lua Plugins
-
-1. Install PLua as described above.
-
-2. Place your `.lua` or `.luau` files directly in the server's `plugins` directory.
-
-3. Start or restart your server - your Lua plugins will be loaded automatically as first-class server plugins.
+1. Place `plua.wasm` in your Pumpkin server's plugins directory
+2. Start the server — PLua will create its data directory with a `plugins/` subfolder
+3. Place `.lua` plugin files in `plugins/plua/plugins/` (relative to the server)
+4. Use the `/plua` command to manage plugins
 
 ## Commands
 
-PLua provides the following in-game commands:
+- `/plua list` — List all available Lua plugins and their status
+- `/plua enable <name>` — Enable a plugin
+- `/plua disable <name>` — Disable a plugin
+- `/plua reload` — Reload all enabled plugins
+- `/plua reload <name>` — Reload a specific plugin
+- `/plua info <name>` — Show plugin metadata
 
-- `/plua list` - Lists all available Lua plugins and their status
-- `/plua enable <plugin_name>` - Enables a plugin
-- `/plua disable <plugin_name>` - Disables a plugin
-- `/plua reload` - Reloads all plugins
-- `/plua reload <plugin_name>` - Reloads a specific plugin
-- `/plua info <plugin_name>` - Shows detailed information about a plugin
+Requires OP level 4 (`plua:command.plua` permission).
 
 ## Writing Lua Plugins
 
-### Plugin Structure
-
-You can create either a traditional PLua plugin (in `plugins/plua/plugins`) or a direct Lua plugin (in `plugins`). Each plugin must have:
-
-1. A `PLUGIN_INFO` table with metadata
-2. `on_enable` and `on_disable` functions (optional but recommended)
-
-#### Basic Example (Traditional or Direct):
+A plugin is a `.lua` file that returns a table with metadata and optional lifecycle hooks:
 
 ```lua
--- Plugin metadata and lifecycle functions (required)
 return {
     name = "MyPlugin",
-    description = "An awesome plugin",
+    description = "Does something useful",
     version = "1.0.0",
     author = "Your Name",
-    
-    -- Called when the plugin is enabled
+
     on_enable = function()
         pumpkin.log.info("MyPlugin enabled!")
-        -- Your initialization code here
     end,
-    
-    -- Called when the plugin is disabled
+
     on_disable = function()
         pumpkin.log.info("MyPlugin disabled!")
-        -- Your cleanup code here
-    end
+    end,
 }
 ```
 
-For more complex examples, check the `examples` directory in this repository.
+The `on_enable` function is called when the plugin is loaded. The `on_disable` function is called when unloaded. Both are optional.
 
-### Available API
+## API Reference
 
-PLua exposes a global `pumpkin` table with the following functionality:
+PLua exposes a global `pumpkin` table:
 
-#### Logging
+### Logging
+
 ```lua
-pumpkin.log.info("Information message")
-pumpkin.log.warn("Warning message")
-pumpkin.log.error("Error message")
-pumpkin.log.debug("Debug message")
+pumpkin.log.info("message")
+pumpkin.log.warn("message")
+pumpkin.log.error("message")
+pumpkin.log.debug("message")
 ```
 
-#### Server
+### Server
+
 ```lua
--- Send a message to all players
 pumpkin.server.broadcast_message("Hello everyone!")
 ```
 
-#### Events
+### Events
+
 ```lua
--- Register event listeners
-local join_listener = pumpkin.events.register_listener("player_join", function(event)
-    pumpkin.log.info("Player joined: " .. event.player_name)
-    -- Access event data: event.player_name, event.player_uuid, event.join_message
+-- Register a listener (returns a listener ID)
+local id = pumpkin.events.register_listener("player_join", function(event)
+    pumpkin.log.info(event.player_name .. " joined!")
 end)
 
-local chat_listener = pumpkin.events.register_listener("player_chat", function(event)
-    pumpkin.log.info("Chat message: " .. event.message)
-    -- Access event data: event.player_name, event.player_uuid, event.message, event.recipients
-end)
-
--- Multiple plugins can register for the same event without conflicts
--- Each listener gets a unique ID that combines plugin name, timestamp and random value
-print(join_listener) -- e.g. "listener_MyPlugin_player_join_1683724592123_3829572093"
-
--- Unregister event listeners
-pumpkin.events.unregister_listener("player_join", join_listener)
-pumpkin.events.unregister_listener("player_chat", chat_listener)
+-- Unregister later
+pumpkin.events.unregister_listener("player_join", id)
 ```
 
-## Plugin Lifecycle
+## Supported Events
 
-1. PLua scans the `plugins` directory for `.lua` files
-2. It loads and evaluates each plugin file to get its manifest (which contains metadata and lifecycle functions)
-3. Enabled plugins are initialized by:
-   a. Loading the plugin script
-   b. Calling its `on_enable` function from the manifest
-4. When plugins are disabled, their `on_disable` function from the manifest is called
+### player_join
 
-## Event System
+| Field | Type | Description |
+|---|---|---|
+| `player_name` | string | The joining player's name |
+| `join_message` | string | The join message |
+| `cancelled` | boolean | Whether the event was cancelled |
 
-PLua includes an event system that allows Lua plugins to respond to game events. Currently supported events:
+### player_leave
 
-### Player Join Event
-Triggered when a player joins the server.
+| Field | Type | Description |
+|---|---|---|
+| `player_name` | string | The leaving player's name |
+| `leave_message` | string | The leave message |
+| `cancelled` | boolean | Whether the event was cancelled |
 
-Event data:
-- `player_name`: The name of the player
-- `player_uuid`: The UUID of the player
-- `join_message`: The join message
+### player_chat
 
-### Player Leave Event
-Triggered when a player leaves the server.
+| Field | Type | Description |
+|---|---|---|
+| `player_name` | string | The player's name |
+| `message` | string | The chat message content |
+| `cancelled` | boolean | Whether the event was cancelled |
 
-Event data:
-- `player_name`: The name of the player
-- `player_uuid`: The UUID of the player
-- `leave_message`: The leave message
+### block_place
 
-### Player Chat Event
-Triggered when a player sends a chat message.
+| Field | Type | Description |
+|---|---|---|
+| `player_name` | string | The player's name |
+| `block_placed` | string | The block being placed |
+| `x`, `y`, `z` | integer | Block position |
+| `can_build` | boolean | Whether player can build here |
+| `cancelled` | boolean | Whether the event was cancelled |
 
-Event data:
-- `player_name`: The name of the player
-- `player_uuid`: The UUID of the player
-- `message`: The content of the chat message
-- `recipients`: The number of players who will receive the message
+### block_break
 
-### Block Place Event
-Triggered when a player places a block.
+| Field | Type | Description |
+|---|---|---|
+| `player_name` | string | The player's name (empty if no player) |
+| `block` | string | The block type broken |
+| `x`, `y`, `z` | integer | Block position |
+| `exp` | integer | Experience to drop |
+| `should_drop` | boolean | Whether items should drop |
+| `cancelled` | boolean | Whether the event was cancelled |
 
-Event data:
-- `player_name`: The name of the player
-- `player_uuid`: The UUID of the player
-- `block_placed`: The type of block being placed
-- `block_against`: The type of block being placed against
-- `can_build`: Whether the player is allowed to build in this location
+## Notes
 
-### Block Break Event
-Triggered when a block is broken.
-
-Event data:
-- `player_name`: The name of the player (if a player broke it, otherwise nil)
-- `player_uuid`: The UUID of the player (if a player broke it, otherwise nil)
-- `block_type`: The type of block that was broken
-- `position_x`, `position_y`, `position_z`: The coordinates of the block
-- `experience`: The amount of experience that will drop
-- `drop_items`: Whether items will drop from this block
-
-See the `examples/hello_event` and `examples/event_logger` directories for sample plugins that use the event system.
-
-## Direct Lua Plugins
-
-PLua now supports loading Lua plugins directly from the server's plugins directory, making them first-class citizens in the Pumpkin ecosystem.
-
-### Benefits of Direct Lua Plugins
-
-- **Seamless Integration**: Lua plugins appear alongside native plugins in the server's plugin list.
-- **Standard Management**: Use the server's plugin management commands instead of dedicated `/plua` commands.
-- **Full Lifecycle**: Direct plugins follow the same lifecycle as native plugins.
-- **Type Safety**: Use Luau's strict typing for more robust plugins.
-
-### Creating a Direct Lua Plugin
-
-1. Create a `.lua` or `.luau` file that returns a table with your plugin manifest (metadata and lifecycle functions).
-2. Place it directly in the server's `plugins` directory.
-3. Add `--!strict` at the top of your file to enable Luau's type checking (optional but recommended).
-
-### Compatibility
-
-Traditional PLua plugins continue to work as before. You can use both approaches side-by-side.
-
-## Future Enhancements
-
-- More events (entity interactions, inventory actions, etc.)
-- Command registration API
-- Player and world manipulation
-- Task scheduling
-- Configuration file API for Lua plugins
-- Improved Luau type definitions
+- PLua uses **Lua 5.4** (via piccolo). Luau-specific syntax like `--!strict` and type annotations are **not supported**.
+- Plugins are loaded from the `plugins/` subdirectory inside PLua's data folder.
+- Plugin files must have a `.lua` or `.luau` extension.
+- The `string` standard library is limited; string concatenation (`..`) works, but `string.format` is not available.
 
 ## License
 
-Same license as the Pumpkin server.
+MIT — same as the Pumpkin server.

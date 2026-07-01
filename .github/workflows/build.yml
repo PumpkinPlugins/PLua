@@ -11,32 +11,14 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-# Cancel in-progress runs when a new workflow with the same ref is triggered
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}-${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: libplua_x86_64_linux.so
-            file_extension: so
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_name: libplua_aarch64_linux.so
-            file_extension: so
-            cross: true
-          - os: windows-latest
-            target: x86_64-pc-windows-gnu
-            artifact_name: plua_x86_64_windows.dll
-            file_extension: dll
+    name: Build wasm32-wasip2
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -48,31 +30,19 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: wasm32-wasip2-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools (ARM64)
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          mkdir -p .cargo
-          echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+          targets: wasm32-wasip2
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target wasm32-wasip2
 
-      - name: Rename build artifact
-        run: |
-          mkdir -p artifacts
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/plua.${{ matrix.file_extension }} artifacts/${{ matrix.artifact_name }}
-          else
-            cp target/${{ matrix.target }}/release/libplua.${{ matrix.file_extension }} artifacts/${{ matrix.artifact_name }}
-          fi
-        shell: bash
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plua.wasm
+          path: target/wasm32-wasip2/release/plua.wasm
+          if-no-files-found: error

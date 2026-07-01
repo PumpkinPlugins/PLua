@@ -1,70 +1,47 @@
-use anyhow::{Context as AnyhowContext, Result};
-use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PLuaConfig {
     pub enabled_plugins: Vec<String>,
 }
 
-#[derive(Clone)]
-pub struct ConfigManager {
-    config_path: PathBuf,
-    pub config: PLuaConfig,
-}
-
-impl ConfigManager {
-    pub fn new(data_dir: &Path) -> Result<Self> {
-        fs::create_dir_all(data_dir).context("Failed to create data directory")?;
-
-        let config_path = data_dir.join("config.json");
-        let config = if config_path.exists() {
-            let config_str =
-                fs::read_to_string(&config_path).context("Failed to read config file")?;
-            serde_json::from_str(&config_str).context("Failed to parse config file")?
+impl PLuaConfig {
+    pub fn load(data_folder: &str) -> Self {
+        let config_path = PathBuf::from(data_folder).join("config.json");
+        if config_path.exists() {
+            match fs::read_to_string(&config_path) {
+                Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+                Err(_) => Self::default(),
+            }
         } else {
-            let default_config = PLuaConfig::default();
-            let config_str = serde_json::to_string_pretty(&default_config)
-                .context("Failed to serialize default config")?;
-            fs::write(&config_path, config_str).context("Failed to write default config file")?;
-            default_config
-        };
-
-        Ok(Self {
-            config_path,
-            config,
-        })
-    }
-
-    pub fn save(&self) -> Result<()> {
-        let config_str =
-            serde_json::to_string_pretty(&self.config).context("Failed to serialize config")?;
-        fs::write(&self.config_path, config_str).context("Failed to write config file")?;
-        Ok(())
-    }
-
-    pub fn enable_plugin(&mut self, plugin_name: String) -> Result<bool> {
-        if !self.config.enabled_plugins.contains(&plugin_name) {
-            self.config.enabled_plugins.push(plugin_name);
-            self.save()?;
-            Ok(true)
-        } else {
-            Ok(false)
+            let config = Self::default();
+            let _ = fs::create_dir_all(data_folder);
+            let _ = fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap_or_default());
+            config
         }
     }
 
-    pub fn disable_plugin(&mut self, plugin_name: &str) -> Result<bool> {
-        let initial_len = self.config.enabled_plugins.len();
-        self.config
-            .enabled_plugins
-            .retain(|name| name != plugin_name);
+    pub fn write(&self, data_folder: &str) {
+        let config_path = PathBuf::from(data_folder).join("config.json");
+        let _ = fs::create_dir_all(data_folder);
+        let _ = fs::write(&config_path, serde_json::to_string_pretty(self).unwrap_or_default());
+    }
 
-        if self.config.enabled_plugins.len() < initial_len {
-            self.save()?;
-            Ok(true)
-        } else {
-            Ok(false)
+    pub fn enable_plugin(&mut self, name: &str) {
+        if !self.enabled_plugins.contains(&name.to_string()) {
+            self.enabled_plugins.push(name.to_string());
         }
+    }
+
+    pub fn disable_plugin(&mut self, name: &str) {
+        self.enabled_plugins.retain(|n| n != name);
+    }
+
+    pub fn is_enabled(&self, name: &str) -> bool {
+        self.enabled_plugins.contains(&name.to_string())
     }
 }

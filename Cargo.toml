@@ -1,6 +1,6 @@
 [package]
 name = "plua"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2024"
 authors = ["vyPal"]
 description = "Write plugins for the Pumpkin MC Server software in Lua"
@@ -9,19 +9,13 @@ description = "Write plugins for the Pumpkin MC Server software in Lua"
 crate-type = ["cdylib"]
 
 [dependencies]
-pumpkin = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", branch = "master", package = "pumpkin" }
-pumpkin-util = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", branch = "master", package = "pumpkin-util" }
-pumpkin-data = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", branch = "master", package = "pumpkin-data" }
-pumpkin-protocol = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", branch = "master", package = "pumpkin-protocol" }
-pumpkin-api-macros = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", branch = "master", package = "pumpkin-api-macros" }
-
-async-trait = "0.1.88"
-tokio = { version = "1.45.1", features = ["full"] }
-
-env_logger = "0.11.8"
-log = "0.4.27"
-rand = "0.9.1"
-mlua = { version = "0.10.5", features = ["luau", "serialize", "async", "send"] }
+pumpkin-plugin-api = { git = "https://github.com/Pumpkin-MC/Pumpkin", package = "pumpkin-plugin-api" }
+tracing = "0.1"
+piccolo = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
+rand = "0.9.1"
+
+[profile.release]
+lto = true

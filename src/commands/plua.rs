@@ -1,75 +1,46 @@
-use async_trait::async_trait;
-use pumpkin::{
-    command::{
-        CommandExecutor, CommandSender,
-        args::{Arg, ConsumedArgs, message::MsgArgConsumer},
-        dispatcher::CommandError,
-        tree::{
-            CommandTree,
-            builder::{argument, literal},
-        },
-    },
-    server::Server,
+use pumpkin_plugin_api::{
+    command::{Command, CommandError, CommandNode},
+    command_wit::{Arg, ArgumentType, StringType},
+    commands::CommandHandler,
+    common::NamedColor,
+    permission::{Permission, PermissionDefault, PermissionLevel},
+    text::TextComponent,
 };
-use pumpkin_util::text::{TextComponent, color::NamedColor};
 
-use crate::lua;
-
-const NAMES: [&str; 1] = ["plua"];
-const DESCRIPTION: &str = "Manage Lua plugins for the Pumpkin server";
+use crate::{CONFIG, SCRIPT_RUNTIME};
 
 const ARG_PLUGIN_NAME: &str = "plugin_name";
+const PERMISSION_NODE: &str = "plua:command.plua";
 
-pub const PERMISSION_NODE: &str = "plua:command.plua";
+struct ListPluginsHandler;
 
-pub fn init_command_tree() -> CommandTree {
-    CommandTree::new(NAMES, DESCRIPTION)
-        .then(literal("list").execute(ListPluginsExecutor {}))
-        .then(
-            literal("enable")
-                .then(argument(ARG_PLUGIN_NAME, MsgArgConsumer).execute(EnablePluginExecutor {})),
-        )
-        .then(
-            literal("disable")
-                .then(argument(ARG_PLUGIN_NAME, MsgArgConsumer).execute(DisablePluginExecutor {})),
-        )
-        .then(
-            literal("reload")
-                .execute(ReloadAllExecutor {})
-                .then(argument(ARG_PLUGIN_NAME, MsgArgConsumer).execute(ReloadPluginExecutor {})),
-        )
-        .then(
-            literal("info")
-                .then(argument(ARG_PLUGIN_NAME, MsgArgConsumer).execute(PluginInfoExecutor {})),
-        )
-}
-
-struct ListPluginsExecutor {}
-
-#[async_trait]
-impl CommandExecutor for ListPluginsExecutor {
-    async fn execute<'a>(
+impl CommandHandler for ListPluginsHandler {
+    fn handle(
         &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        _: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        let plugins = lua::get_plugin_list();
+        sender: pumpkin_plugin_api::command::CommandSender,
+        _server: pumpkin_plugin_api::Server,
+        _args: pumpkin_plugin_api::command::ConsumedArgs,
+    ) -> pumpkin_plugin_api::Result<i32, CommandError> {
+        let plugin_list = SCRIPT_RUNTIME.with(|rt| {
+            if let Some(ref runtime) = *rt.borrow() {
+                runtime.get_plugin_list()
+            } else {
+                Vec::new()
+            }
+        });
 
-        if plugins.is_empty() {
-            sender
-                .send_message(
-                    TextComponent::text("No Lua plugins found.").color_named(NamedColor::Yellow),
-                )
-                .await;
-            return Ok(());
+        if plugin_list.is_empty() {
+            let msg = TextComponent::text("No Lua plugins found.");
+            msg.color_named(NamedColor::Yellow);
+            sender.send_message(msg);
+            return Ok(0);
         }
 
-        sender
-            .send_message(TextComponent::text("=== Lua Plugins ===").color_named(NamedColor::Gold))
-            .await;
+        let header = TextComponent::text("=== Lua Plugins ===");
+        header.color_named(NamedColor::Gold);
+        sender.send_message(header);
 
-        for (name, enabled) in plugins {
+        for (name, enabled, _version, _desc) in plugin_list {
             let status_color = if enabled {
                 NamedColor::Green
             } else {
@@ -77,257 +48,266 @@ impl CommandExecutor for ListPluginsExecutor {
             };
             let status_text = if enabled { "Enabled" } else { "Disabled" };
 
-            sender
-                .send_message(
-                    TextComponent::text(format!("- {} [", name))
-                        .add_text(status_text)
-                        .color_named(status_color)
-                        .add_child(TextComponent::text("]").color_named(status_color)),
-                )
-                .await;
+            let line = TextComponent::text(&format!("- {name} ["));
+            let status = TextComponent::text(status_text);
+            status.color_named(status_color);
+            line.add_child(status);
+            let bracket = TextComponent::text("]");
+            line.add_child(bracket);
+            sender.send_message(line);
         }
 
-        Ok(())
+        Ok(0)
     }
 }
 
-struct EnablePluginExecutor {}
+struct EnablePluginHandler;
 
-#[async_trait]
-impl CommandExecutor for EnablePluginExecutor {
-    async fn execute<'a>(
+impl CommandHandler for EnablePluginHandler {
+    fn handle(
         &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        args: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        let Some(Arg::Msg(plugin_name)) = args.get(ARG_PLUGIN_NAME) else {
+        sender: pumpkin_plugin_api::command::CommandSender,
+        _server: pumpkin_plugin_api::Server,
+        args: pumpkin_plugin_api::command::ConsumedArgs,
+    ) -> pumpkin_plugin_api::Result<i32, CommandError> {
+        let Arg::Simple(plugin_name) = args.get_value(ARG_PLUGIN_NAME) else {
             return Err(CommandError::InvalidConsumption(Some(
                 ARG_PLUGIN_NAME.into(),
             )));
         };
 
-        match lua::enable_plugin(plugin_name) {
-            Ok(true) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!("Plugin '{}' has been enabled.", plugin_name))
-                            .color_named(NamedColor::Green),
-                    )
-                    .await;
+        let result = SCRIPT_RUNTIME.with(|rt| {
+            (*rt.borrow_mut())
+                .as_mut()
+                .map(|runtime| runtime.enable_plugin(&plugin_name))
+        });
+
+        match result {
+            Some(Ok(())) => {
+                CONFIG.with(|c| c.borrow_mut().enable_plugin(&plugin_name));
+                let msg = TextComponent::text(&format!("Plugin '{plugin_name}' "));
+                let suffix = TextComponent::text("has been enabled.");
+                suffix.color_named(NamedColor::Green);
+                msg.add_child(suffix);
+                sender.send_message(msg);
+                Ok(0)
             }
-            Ok(false) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!(
-                            "Plugin '{}' is already enabled.",
-                            plugin_name
-                        ))
-                        .color_named(NamedColor::Yellow),
-                    )
-                    .await;
+            Some(Err(e)) => {
+                let msg =
+                    TextComponent::text(&format!("Failed to enable plugin '{plugin_name}': "));
+                let suffix = TextComponent::text(&e);
+                suffix.color_named(NamedColor::Red);
+                msg.add_child(suffix);
+                sender.send_message(msg);
+                Ok(0)
             }
-            Err(e) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!(
-                            "Failed to enable plugin '{}': {}",
-                            plugin_name, e
-                        ))
-                        .color_named(NamedColor::Red),
-                    )
-                    .await;
+            None => {
+                let msg = TextComponent::text("Runtime not initialized");
+                msg.color_named(NamedColor::Red);
+                sender.send_message(msg);
+                Ok(0)
             }
         }
-
-        Ok(())
     }
 }
 
-struct DisablePluginExecutor {}
+struct DisablePluginHandler;
 
-#[async_trait]
-impl CommandExecutor for DisablePluginExecutor {
-    async fn execute<'a>(
+impl CommandHandler for DisablePluginHandler {
+    fn handle(
         &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        args: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        let Some(Arg::Msg(plugin_name)) = args.get(ARG_PLUGIN_NAME) else {
+        sender: pumpkin_plugin_api::command::CommandSender,
+        _server: pumpkin_plugin_api::Server,
+        args: pumpkin_plugin_api::command::ConsumedArgs,
+    ) -> pumpkin_plugin_api::Result<i32, CommandError> {
+        let Arg::Simple(plugin_name) = args.get_value(ARG_PLUGIN_NAME) else {
             return Err(CommandError::InvalidConsumption(Some(
                 ARG_PLUGIN_NAME.into(),
             )));
         };
 
-        match lua::disable_plugin(plugin_name) {
-            Ok(true) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!("Plugin '{}' has been disabled.", plugin_name))
-                            .color_named(NamedColor::Green),
-                    )
-                    .await;
+        let result = SCRIPT_RUNTIME.with(|rt| {
+            (*rt.borrow_mut())
+                .as_mut()
+                .map(|runtime| runtime.disable_plugin(&plugin_name))
+        });
+
+        match result {
+            Some(Ok(())) => {
+                CONFIG.with(|c| c.borrow_mut().disable_plugin(&plugin_name));
+                let msg = TextComponent::text(&format!("Plugin '{plugin_name}' "));
+                let suffix = TextComponent::text("has been disabled.");
+                suffix.color_named(NamedColor::Green);
+                msg.add_child(suffix);
+                sender.send_message(msg);
+                Ok(0)
             }
-            Ok(false) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!(
-                            "Plugin '{}' is already disabled.",
-                            plugin_name
-                        ))
-                        .color_named(NamedColor::Yellow),
-                    )
-                    .await;
+            Some(Err(e)) => {
+                let msg =
+                    TextComponent::text(&format!("Failed to disable plugin '{plugin_name}': "));
+                let suffix = TextComponent::text(&e);
+                suffix.color_named(NamedColor::Red);
+                msg.add_child(suffix);
+                sender.send_message(msg);
+                Ok(0)
             }
-            Err(e) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!(
-                            "Failed to disable plugin '{}': {}",
-                            plugin_name, e
-                        ))
-                        .color_named(NamedColor::Red),
-                    )
-                    .await;
+            None => {
+                let msg = TextComponent::text("Runtime not initialized");
+                msg.color_named(NamedColor::Red);
+                sender.send_message(msg);
+                Ok(0)
             }
         }
-
-        Ok(())
     }
 }
 
-struct ReloadAllExecutor {}
+struct ReloadAllHandler;
 
-#[async_trait]
-impl CommandExecutor for ReloadAllExecutor {
-    async fn execute<'a>(
+impl CommandHandler for ReloadAllHandler {
+    fn handle(
         &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        _: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        match lua::reload() {
-            Ok(_) => {
-                sender
-                    .send_message(
-                        TextComponent::text("All Lua plugins have been reloaded.")
-                            .color_named(NamedColor::Green),
-                    )
-                    .await;
+        sender: pumpkin_plugin_api::command::CommandSender,
+        _server: pumpkin_plugin_api::Server,
+        _args: pumpkin_plugin_api::command::ConsumedArgs,
+    ) -> pumpkin_plugin_api::Result<i32, CommandError> {
+        let result = SCRIPT_RUNTIME.with(|rt| {
+            if let Some(ref mut runtime) = *rt.borrow_mut() {
+                let names: Vec<String> = runtime
+                    .get_plugin_list()
+                    .iter()
+                    .map(|(n, _, _, _)| n.clone())
+                    .collect();
+                for name in &names {
+                    let _ = runtime.reload_plugin(name);
+                }
+                Ok::<(), String>(())
+            } else {
+                Err("Runtime not initialized".into())
+            }
+        });
+
+        match result {
+            Ok(()) => {
+                let msg = TextComponent::text("All Lua plugins have been reloaded.");
+                msg.color_named(NamedColor::Green);
+                sender.send_message(msg);
+                Ok(0)
             }
             Err(e) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!("Failed to reload plugins: {}", e))
-                            .color_named(NamedColor::Red),
-                    )
-                    .await;
+                let msg = TextComponent::text("Failed to reload plugins: ");
+                msg.add_text(&e);
+                msg.color_named(NamedColor::Red);
+                sender.send_message(msg);
+                Ok(0)
             }
         }
-
-        Ok(())
     }
 }
 
-struct ReloadPluginExecutor {}
+struct ReloadPluginHandler;
 
-#[async_trait]
-impl CommandExecutor for ReloadPluginExecutor {
-    async fn execute<'a>(
+impl CommandHandler for ReloadPluginHandler {
+    fn handle(
         &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        args: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        let Some(Arg::Msg(plugin_name)) = args.get(ARG_PLUGIN_NAME) else {
+        sender: pumpkin_plugin_api::command::CommandSender,
+        _server: pumpkin_plugin_api::Server,
+        args: pumpkin_plugin_api::command::ConsumedArgs,
+    ) -> pumpkin_plugin_api::Result<i32, CommandError> {
+        let Arg::Simple(plugin_name) = args.get_value(ARG_PLUGIN_NAME) else {
             return Err(CommandError::InvalidConsumption(Some(
                 ARG_PLUGIN_NAME.into(),
             )));
         };
 
-        match lua::reload_plugin(plugin_name) {
-            Ok(true) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!("Plugin '{}' has been reloaded.", plugin_name))
-                            .color_named(NamedColor::Green),
-                    )
-                    .await;
+        let result = SCRIPT_RUNTIME.with(|rt| {
+            (*rt.borrow_mut())
+                .as_mut()
+                .map(|runtime| runtime.reload_plugin(&plugin_name))
+        });
+
+        match result {
+            Some(Ok(())) => {
+                let msg = TextComponent::text(&format!("Plugin '{plugin_name}' "));
+                let suffix = TextComponent::text("has been reloaded.");
+                suffix.color_named(NamedColor::Green);
+                msg.add_child(suffix);
+                sender.send_message(msg);
+                Ok(0)
             }
-            Ok(false) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!("Plugin '{}' not found.", plugin_name))
-                            .color_named(NamedColor::Yellow),
-                    )
-                    .await;
+            Some(Err(e)) => {
+                let msg =
+                    TextComponent::text(&format!("Failed to reload plugin '{plugin_name}': "));
+                let suffix = TextComponent::text(&e);
+                suffix.color_named(NamedColor::Red);
+                msg.add_child(suffix);
+                sender.send_message(msg);
+                Ok(0)
             }
-            Err(e) => {
-                sender
-                    .send_message(
-                        TextComponent::text(format!(
-                            "Failed to reload plugin '{}': {}",
-                            plugin_name, e
-                        ))
-                        .color_named(NamedColor::Red),
-                    )
-                    .await;
+            None => {
+                let msg = TextComponent::text("Runtime not initialized");
+                msg.color_named(NamedColor::Red);
+                sender.send_message(msg);
+                Ok(0)
             }
         }
-
-        Ok(())
     }
 }
 
-struct PluginInfoExecutor {}
+struct PluginInfoHandler;
 
-#[async_trait]
-impl CommandExecutor for PluginInfoExecutor {
-    async fn execute<'a>(
+impl CommandHandler for PluginInfoHandler {
+    fn handle(
         &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        args: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        let Some(Arg::Msg(plugin_name)) = args.get(ARG_PLUGIN_NAME) else {
+        sender: pumpkin_plugin_api::command::CommandSender,
+        _server: pumpkin_plugin_api::Server,
+        args: pumpkin_plugin_api::command::ConsumedArgs,
+    ) -> pumpkin_plugin_api::Result<i32, CommandError> {
+        let Arg::Simple(plugin_name) = args.get_value(ARG_PLUGIN_NAME) else {
             return Err(CommandError::InvalidConsumption(Some(
                 ARG_PLUGIN_NAME.into(),
             )));
         };
 
-        if let Some((name, description, version, author, enabled, file_path)) =
-            lua::get_plugin_info(plugin_name)
-        {
-            sender
-                .send_message(
-                    TextComponent::text(format!("=== {} ===", name)).color_named(NamedColor::Gold),
-                )
-                .await;
+        let info = SCRIPT_RUNTIME.with(|rt| {
+            if let Some(ref runtime) = *rt.borrow() {
+                runtime.get_plugin_info(&plugin_name).map(|(m, p, e)| {
+                    (
+                        m.name.clone(),
+                        m.description.clone(),
+                        m.version.clone(),
+                        m.author.clone(),
+                        e,
+                        p.to_string_lossy().into_owned(),
+                    )
+                })
+            } else {
+                None
+            }
+        });
 
-            sender
-                .send_message(
-                    TextComponent::text("Description: ")
-                        .color_named(NamedColor::Yellow)
-                        .add_text(description),
-                )
-                .await;
+        if let Some((name, description, version, author, enabled, file_path)) = info {
+            let header = TextComponent::text("=== ");
+            header.color_named(NamedColor::Gold);
+            header.add_text(&name);
+            let suffix = TextComponent::text(" ===");
+            suffix.color_named(NamedColor::Gold);
+            header.add_child(suffix);
+            sender.send_message(header);
 
-            sender
-                .send_message(
-                    TextComponent::text("Version: ")
-                        .color_named(NamedColor::Yellow)
-                        .add_text(version),
-                )
-                .await;
+            let desc = TextComponent::text("Description: ");
+            desc.color_named(NamedColor::Yellow);
+            desc.add_text(&description);
+            sender.send_message(desc);
 
-            sender
-                .send_message(
-                    TextComponent::text("Author: ")
-                        .color_named(NamedColor::Yellow)
-                        .add_text(author),
-                )
-                .await;
+            let ver = TextComponent::text("Version: ");
+            ver.color_named(NamedColor::Yellow);
+            ver.add_text(&version);
+            sender.send_message(ver);
+
+            let auth = TextComponent::text("Author: ");
+            auth.color_named(NamedColor::Yellow);
+            auth.add_text(&author);
+            sender.send_message(auth);
 
             let status_color = if enabled {
                 NamedColor::Green
@@ -335,33 +315,84 @@ impl CommandExecutor for PluginInfoExecutor {
                 NamedColor::Red
             };
             let status_text = if enabled { "Enabled" } else { "Disabled" };
+            let st = TextComponent::text("Status: ");
+            st.color_named(NamedColor::Yellow);
+            st.add_text(status_text);
+            st.color_named(status_color);
+            sender.send_message(st);
 
-            sender
-                .send_message(
-                    TextComponent::text("Status: ")
-                        .color_named(NamedColor::Yellow)
-                        .add_text(status_text)
-                        .color_named(status_color),
-                )
-                .await;
-
-            let path_str = file_path.to_string_lossy().into_owned();
-            sender
-                .send_message(
-                    TextComponent::text("File: ")
-                        .color_named(NamedColor::Yellow)
-                        .add_text(path_str),
-                )
-                .await;
+            let file = TextComponent::text("File: ");
+            file.color_named(NamedColor::Yellow);
+            file.add_text(&file_path);
+            sender.send_message(file);
         } else {
-            sender
-                .send_message(
-                    TextComponent::text(format!("Plugin '{}' not found.", plugin_name))
-                        .color_named(NamedColor::Red),
-                )
-                .await;
+            let msg = TextComponent::text(&format!("Plugin '{plugin_name}' "));
+            let suffix = TextComponent::text("not found.");
+            suffix.color_named(NamedColor::Red);
+            msg.add_child(suffix);
+            sender.send_message(msg);
         }
 
-        Ok(())
+        Ok(0)
     }
+}
+
+pub fn register(context: &pumpkin_plugin_api::Context) -> pumpkin_plugin_api::Result<()> {
+    context.register_permission(&Permission {
+        node: PERMISSION_NODE.into(),
+        description: "Allows managing Lua plugins via the /plua command".into(),
+        default: PermissionDefault::Op(PermissionLevel::Four),
+        children: Vec::new(),
+    })?;
+
+    let plua_cmd = Command::new(
+        &["plua".to_string()],
+        "Manage Lua plugins for the Pumpkin server",
+    );
+
+    plua_cmd.then(CommandNode::literal("list").execute(ListPluginsHandler));
+
+    let enable_node = CommandNode::literal("enable");
+    enable_node.then(
+        CommandNode::argument(
+            ARG_PLUGIN_NAME,
+            &ArgumentType::String(StringType::SingleWord),
+        )
+        .execute(EnablePluginHandler),
+    );
+    plua_cmd.then(enable_node);
+
+    let disable_node = CommandNode::literal("disable");
+    disable_node.then(
+        CommandNode::argument(
+            ARG_PLUGIN_NAME,
+            &ArgumentType::String(StringType::SingleWord),
+        )
+        .execute(DisablePluginHandler),
+    );
+    plua_cmd.then(disable_node);
+
+    let reload_node = CommandNode::literal("reload").execute(ReloadAllHandler);
+    reload_node.then(
+        CommandNode::argument(
+            ARG_PLUGIN_NAME,
+            &ArgumentType::String(StringType::SingleWord),
+        )
+        .execute(ReloadPluginHandler),
+    );
+    plua_cmd.then(reload_node);
+
+    let info_node = CommandNode::literal("info");
+    info_node.then(
+        CommandNode::argument(
+            ARG_PLUGIN_NAME,
+            &ArgumentType::String(StringType::SingleWord),
+        )
+        .execute(PluginInfoHandler),
+    );
+    plua_cmd.then(info_node);
+
+    context.register_command(plua_cmd, PERMISSION_NODE);
+
+    Ok(())
 }
