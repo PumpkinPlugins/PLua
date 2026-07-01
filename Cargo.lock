@@ -274,7 +274,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "plua"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "piccolo",
@@ -328,7 +328,7 @@ dependencies = [
 [[package]]
 name = "pumpkin-plugin-api"
 version = "0.1.0"
-source = "git+https://github.com/Pumpkin-MC/Pumpkin#322b7af6aea6166c8c008765bf38d0078a1bbff9"
+source = "git+https://github.com/Pumpkin-MC/Pumpkin#395c4aa36ba957ed8fa433eb7850c63b2f3e0541"
 dependencies = [
  "postcard",
  "serde_json",
