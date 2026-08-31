@@ -1,0 +1,28 @@
+{
+  "lsp": {
+    "lua-language-server": {
+      "settings": {
+        "Lua": {
+          "workspace": {
+            "library": ["${workspaceFolder}/library/globals.d.lua"],
+            "checkThirdParty": false
+          },
+          "runtime": {
+            "version": "Lua 5.4"
+          },
+          "diagnostics": {
+            "globals": ["pumpkin"]
+          },
+          "completion": {
+            "callSnippet": "Replace"
+          },
+          "hint": {
+            "enable": true,
+            "paramType": true,
+            "setType": true
+          }
+        }
+      }
+    }
+  }
+}
